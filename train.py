@@ -4,6 +4,8 @@ import os
 import random
 import shutil
 import time
+import neptune
+import json
 from pathlib import Path
 from warnings import warn
 
@@ -318,7 +320,12 @@ def train(hyp, opt, device, tb_writer=None):
                                                  dataloader=testloader,
                                                  save_dir=log_dir,
                                                  plots=epoch == 0 or final_epoch)  # plot first and last
-
+            neptune.log_artifact(opt.hyp)
+            neptune.log_metric('precision', float("{:.3f}".format(results[0])))
+            neptune.log_metric('recall', float("{:.3f}".format(results[1])))
+            neptune.log_metric('map50', float("{:.3f}".format(results[2])))
+            neptune.log_metric('map5095', float("{:.3f}".format(results[3])))
+            neptune.log_text('maps', "\n".join(format(x, "10.3f") for x in maps))
             # Write
             with open(results_file, 'a') as f:
                 f.write(s + '%10.4g' * 7 % results + '\n')  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
@@ -403,7 +410,12 @@ if __name__ == '__main__':
     parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
     parser.add_argument('--logdir', type=str, default='runs/', help='logging directory')
-    parser.add_argument('--neptune_api', type=str, default='', help='Nepune API key')
+    parser.add_argument('--experiment-api-key', type=str, default='', help='Experiment API key')
+    parser.add_argument('--experiment-username', type=str, default='', help='Experiment username')
+    parser.add_argument('--experiment-project', type=str, default='', help='Experiment project')
+    parser.add_argument('--experiment-name', type=str, default='', help='Experiment name')
+    parser.add_argument('--experiment-params-file', type=str, default='', help='Experiment parameters file')
+    parser.add_argument('--experiment-tags', type=str, default='', help='Experiment tags, camma-delimited')
     parser.add_argument('--workers', type=int, default=8, help='maximum number of dataloader workers')
     opt = parser.parse_args()
 
@@ -414,6 +426,17 @@ if __name__ == '__main__':
     set_logging(opt.global_rank)
     if opt.global_rank in [-1, 0]:
         check_git_status()
+
+    if opt.experiment_api_key:
+        neptune.init(opt.experiment_username+'/'+opt.experiment_project, api_token=opt.experiment_api_key)
+        
+        experiment_params = {}
+        if (opt.experiment_params_file and os.path.isfile(opt.experiment_params_file)):
+            with open(opt.experiment_params_file) as f:
+                experiment_params = json.load(f)
+        neptune.create_experiment(name=opt.experiment_name,params=experiment_params,upload_source_files=['train.py'])
+        neptune.log_artifact(opt.hyp)
+
 
     # Resume
     if opt.resume:  # resume an interrupted run
